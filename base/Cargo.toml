@@ -1,0 +1,13 @@
+[package]
+name = "base"
+version = "0.1.0"
+edition = "2024"
+authors = ["Amit Pandey <amit08072005@gmail.com>"]
+description = "Base components for FHE-AES implementation"
+
+[dependencies]
+rayon = "1.0.0"
+tfhe = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "4e2db92", features = ["integer", "nightly-avx512", "noise-asserts", "boolean"]}
+dashmap = "6.0.0"
+num_cpus = "1.16.0"
+

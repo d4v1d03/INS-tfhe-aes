@@ -1,0 +1,18 @@
+# Generated files
+/target/
+/*/target/
+
+# Rust lock files
+Cargo.lock
+/*/Cargo.lock
+
+# IDE and editor files
+/.idea/
+/.vscode/
+*.swp
+*.swo
+*~
+
+# System files
+.DS_Store
+Thumbs.db

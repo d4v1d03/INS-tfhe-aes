@@ -1,0 +1,22 @@
+[package]
+name = "tfhe_aes"
+version = "0.1.0"
+edition = "2021"
+authors = ["Amit Pandey <amit08072005@gmail.com>"]
+description = "A Fully Homomorphic Encryption implementation of AES"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+base = { path = "../base/"}
+modes = { path = "../modes/"}
+
+aes = "0.8.4"
+cbc = "0.1.2"
+clap = { version = "4.5.23", features = ["derive"] }
+ctr = "0.9.2"
+dashmap = "6.0.0"
+hex = "0.4"
+hex-literal = "0.4.1"
+rand = "0.9"
+tfhe = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "4e2db92", features = ["integer", "nightly-avx512", "noise-asserts", "boolean"]}
