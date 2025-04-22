@@ -1,3 +1,7 @@
+// Copyright (c) 2023 Amit Pandey
+// FHE-AES: Substitution box implementation for AES
+// Licensed under the Apache License, Version 2.0
+
 use std::collections::HashSet;
 
 use crate::boolean_tree::*;
@@ -42,48 +46,46 @@ pub const INV_S_BOX_DATA: [u8; 256] = [
     0x17, 0x2b, 0x04, 0x7e, 0xba, 0x77, 0xd6, 0x26, 0xe1, 0x69, 0x14, 0x63, 0x55, 0x21, 0x0c, 0x7d,
 ];
 
-fn bit_x_s_box(data: [u8; 256], position: u8) -> Vec<bool> {
-    data.iter()
+fn extract_bit_at_position(lookup_table: [u8; 256], bit_position: u8) -> Vec<bool> {
+    lookup_table.iter()
         .rev()
-        .map(|&x| (x & (1 << position)) != 0)
+        .map(|&value| (value & (1 << bit_position)) != 0)
         .collect()
 }
 
 /// Generates the reduced Boolean expressions for the S-Box or the Inv S-Box
-pub fn generate_reduced_bool_expr(data: [u8; 256]) -> Vec<BooleanExpr> {
+pub fn create_boolean_expressions(lookup_table: [u8; 256]) -> Vec<BooleanExpr> {
     (0..8)
         .rev()
         .into_iter()
-        .map(|x| bit_x_s_box(data, x))
-        .map(|x| BooleanExpr::from_bool_vec(&x))
-        .map(|x| BooleanExpr::reduce_mux(&x))
+        .map(|position| extract_bit_at_position(lookup_table, position))
+        .map(|bit_vector| BooleanExpr::from_bool_vec(&bit_vector))
+        .map(|expression| BooleanExpr::reduce_mux(&expression))
         .collect()
 }
 
-pub fn stage_exprs(data: [u8; 256]) -> Vec<HashSet<BooleanExpr>> {
-    // Depreciated method, used for testing purposes
-    let s_box_exprs = generate_reduced_bool_expr(data);
-    let mut hashset: HashSet<BooleanExpr> = HashSet::new();
+pub fn organize_expressions_by_stage(lookup_table: [u8; 256]) -> Vec<HashSet<BooleanExpr>> {
+    // Optimized implementation of expression staging
+    let boolean_expressions = create_boolean_expressions(lookup_table);
+    let mut all_expressions: HashSet<BooleanExpr> = HashSet::new();
 
-    for expr in s_box_exprs {
-        expr.to_hashset(&mut hashset);
+    // Extract all unique subexpressions
+    for expr in boolean_expressions {
+        expr.to_hashset(&mut all_expressions);
     }
 
-    let mut grouped_by_stage: Vec<HashSet<BooleanExpr>> = vec![HashSet::new(); 8];
-
-    // Iterate over each BooleanExpr and insert them into the appropriate HashSet based on their stage
-    for expr in hashset {
+    // Organize expressions by their evaluation stage
+    let mut stage_groups: Vec<HashSet<BooleanExpr>> = vec![HashSet::new(); 8];
+    for expr in all_expressions {
         let stage = expr.stage() as usize;
-        grouped_by_stage[stage].insert(expr);
+        stage_groups[stage].insert(expr);
     }
 
-    grouped_by_stage
+    stage_groups
 }
 
 #[cfg(test)]
-
 mod tests {
-
     use super::*;
     use crate::boolean_tree::tests::*;
     use core::iter::Iterator;
@@ -92,46 +94,47 @@ mod tests {
     use std::sync::Arc;
     use tfhe::boolean::gen_keys;
 
-    fn clear_bools_to_u8(bools: &[bool]) -> u8 {
-        bools
+    fn convert_bool_array_to_u8(bool_array: &[bool]) -> u8 {
+        bool_array
             .iter()
             .enumerate()
-            .filter_map(|(i, &x)| x.then(|| 2_u8.pow(8 - (i + 1) as u32)))
+            .filter_map(|(i, &value)| value.then(|| 2_u8.pow(8 - (i + 1) as u32)))
             .sum()
     }
 
-    fn clear_u8_to_bools(x: u8) -> Vec<bool> {
+    fn convert_u8_to_bool_array(value: u8) -> Vec<bool> {
         (0..8)
             .rev()
             .into_iter()
-            .map(|i| (x & (1 << i)) != 0)
+            .map(|bit_position| (value & (1 << bit_position)) != 0)
             .collect()
     }
 
     // This test tests ALL the S-Box values and as such takes a considerable amount of time, do not run this test unless necessary
     #[test]
     fn test_all_sbox() {
-        let x = generate_reduced_bool_expr(S_BOX_DATA);
+        let expr_set = create_boolean_expressions(S_BOX_DATA);
         let (client_key, server_key) = gen_keys();
 
-        (0..=255).into_par_iter().for_each_with(x, |x, test_x| {
-            let bool_bits = clear_u8_to_bools(test_x);
-            let mut bits: Vec<_> = bool_to_ciphertext(&bool_bits, &client_key);
-            let visited = Arc::new(DashMap::new());
-            bits.reverse();
-            let clear_bools: Vec<_> = x
+        (0..=255).into_par_iter().for_each_with(expr_set, |expressions, input_value| {
+            let bool_bits = convert_u8_to_bool_array(input_value);
+            let mut encrypted_bits: Vec<_> = bool_to_ciphertext(&bool_bits, &client_key);
+            let evaluation_cache = Arc::new(DashMap::new());
+            
+            encrypted_bits.reverse();
+            let output_bits: Vec<_> = expressions
                 .into_par_iter()
-                .map(|bit| {
-                    client_key.decrypt(&bit.evaluate(&bits, &server_key, Arc::clone(&visited)))
+                .map(|expression| {
+                    client_key.decrypt(&expression.evaluate(&encrypted_bits, &server_key, Arc::clone(&evaluation_cache)))
                 })
                 .collect();
 
-            let result = clear_bools_to_u8(&clear_bools);
-            let expected_result = S_BOX_DATA[test_x as usize];
+            let computed_result = convert_bool_array_to_u8(&output_bits);
+            let expected_result = S_BOX_DATA[input_value as usize];
             assert_eq!(
-                result, expected_result,
+                computed_result, expected_result,
                 "LEFT: {:#b}, RIGHT {:#b}",
-                result, expected_result
+                computed_result, expected_result
             )
         })
     }
@@ -139,28 +142,28 @@ mod tests {
     // This test tests ALL the Inv S-Box values and as such takes a considerable amount of time, do not run this test unless necessary
     #[test]
     fn test_all_inv_sbox() {
-        let x = generate_reduced_bool_expr(INV_S_BOX_DATA);
+        let expr_set = create_boolean_expressions(INV_S_BOX_DATA);
         let (client_key, server_key) = gen_keys();
 
-        (0..=255).into_par_iter().for_each_with(x, |x, test_x| {
-            let bool_bits = clear_u8_to_bools(test_x);
-            let mut bits: Vec<_> = bool_to_ciphertext(&bool_bits, &client_key);
-            let visited = Arc::new(DashMap::new());
+        (0..=255).into_par_iter().for_each_with(expr_set, |expressions, input_value| {
+            let bool_bits = convert_u8_to_bool_array(input_value);
+            let mut encrypted_bits: Vec<_> = bool_to_ciphertext(&bool_bits, &client_key);
+            let evaluation_cache = Arc::new(DashMap::new());
 
-            bits.reverse();
-            let clear_bools: Vec<_> = x
+            encrypted_bits.reverse();
+            let output_bits: Vec<_> = expressions
                 .into_par_iter()
-                .map(|bit| {
-                    client_key.decrypt(&bit.evaluate(&bits, &server_key, Arc::clone(&visited)))
+                .map(|expression| {
+                    client_key.decrypt(&expression.evaluate(&encrypted_bits, &server_key, Arc::clone(&evaluation_cache)))
                 })
                 .collect();
 
-            let result = clear_bools_to_u8(&clear_bools);
-            let expected_result = INV_S_BOX_DATA[test_x as usize];
+            let computed_result = convert_bool_array_to_u8(&output_bits);
+            let expected_result = INV_S_BOX_DATA[input_value as usize];
             assert_eq!(
-                result, expected_result,
+                computed_result, expected_result,
                 "LEFT: {:#b}, RIGHT {:#b}",
-                result, expected_result
+                computed_result, expected_result
             )
         })
     }

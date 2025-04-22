@@ -1,115 +1,155 @@
+// Copyright (c) 2023 Amit Pandey
+// FHE-AES: Electronic Codebook Mode Implementation
+// Licensed under the Apache License, Version 2.0
+
 use base::*;
 use tfhe::boolean::prelude::*;
 
-/// ECB mode is the Electronic Codebook mode for AES-128
+/// ECB (Electronic Codebook) mode implementation for AES-128
+/// This is the simplest encryption mode where each block is encrypted independently
 pub struct ECB {
-    keys: Vec<Key>,
+    round_keys: Vec<Key>,
 }
 
 impl ECB {
-    pub fn new(keys: &[Key]) -> Self {
+    /// Creates a new ECB mode cipher with the given round keys
+    pub fn new(round_keys: &[Key]) -> Self {
         ECB {
-            keys: keys.to_vec(),
+            round_keys: round_keys.to_vec(),
         }
     }
 
-    pub fn encrypt(&self, state: &mut State, server_key: &ServerKey) {
-        // Initial round key addition
-        state.xor_key_enc(&self.keys[0], server_key);
+    /// Encrypts a state in-place using the ECB mode
+    /// 
+    /// # Arguments
+    /// * `block` - The state to encrypt
+    /// * `server_key` - The TFHE server key for FHE operations
+    pub fn encrypt(&self, block: &mut State, server_key: &ServerKey) {
+        // Add the initial round key
+        block.xor_key_enc(&self.round_keys[0], server_key);
 
-        // Main rounds
-        for round in 1..10 {
-            state.sub_bytes(server_key);
-            state.shift_rows();
-            state.mix_columns(server_key);
-            state.xor_key_enc(&self.keys[round], server_key);
+        // Perform the main encryption rounds (1-9)
+        for round_num in 1..10 {
+            // SubBytes transformation - substitute each byte using the S-box
+            block.sub_bytes(server_key);
+            
+            // ShiftRows transformation - cyclically shift the rows
+            block.shift_rows();
+            
+            // MixColumns transformation - mix data within each column
+            block.mix_columns(server_key);
+            
+            // AddRoundKey transformation - XOR the state with the round key
+            block.xor_key_enc(&self.round_keys[round_num], server_key);
         }
 
-        // Final round
-        state.sub_bytes(server_key);
-        state.shift_rows();
-        state.xor_key_enc(&self.keys[10], server_key);
+        // Final round (doesn't include MixColumns)
+        block.sub_bytes(server_key);
+        block.shift_rows();
+        block.xor_key_enc(&self.round_keys[10], server_key);
     }
 
-    pub fn decrypt(&self, state: &mut State, server_key: &ServerKey) {
-        // Initial round key addition
-        state.xor_key_enc(&self.keys[10], server_key);
+    /// Decrypts a state in-place using the ECB mode
+    /// 
+    /// # Arguments
+    /// * `block` - The state to decrypt
+    /// * `server_key` - The TFHE server key for FHE operations
+    pub fn decrypt(&self, block: &mut State, server_key: &ServerKey) {
+        // Add the final round key (in reverse)
+        block.xor_key_enc(&self.round_keys[10], server_key);
 
-        // Main rounds
-        for round in 1..10 {
-            state.inv_shift_rows();
-            state.inv_sub_bytes(server_key);
-            state.xor_key_enc(&self.keys[10 - round], server_key);
-            state.inv_mix_columns(server_key);
+        // Perform the main decryption rounds in reverse order
+        for round_num in 1..10 {
+            // Inverse ShiftRows transformation
+            block.inv_shift_rows();
+            
+            // Inverse SubBytes transformation
+            block.inv_sub_bytes(server_key);
+            
+            // Inverse AddRoundKey transformation
+            block.xor_key_enc(&self.round_keys[10 - round_num], server_key);
+            
+            // Inverse MixColumns transformation
+            block.inv_mix_columns(server_key);
         }
 
-        // Final round
-        state.inv_shift_rows();
-        state.inv_sub_bytes(server_key);
-        state.xor_key_enc(&self.keys[0], server_key);
+        // Final round (in reverse)
+        block.inv_shift_rows();
+        block.inv_sub_bytes(server_key);
+        block.xor_key_enc(&self.round_keys[0], server_key);
     }
 }
 
 #[cfg(test)]
-
 mod tests {
-
     use super::*;
     use base::primitive::*;
     use std::time::Instant;
     use tfhe::boolean::gen_keys;
 
+    /// Test a single block encryption and decryption
     #[test]
-    fn test_ecb_once() {
+    fn test_ecb_single_block() {
         let (client_key, server_key) = gen_keys();
 
-        let curr_key = Key::from_u128_enc(0x2b7e1516_28aed2a6a_bf71588_09cf4f3c, &client_key);
-        let keys: Vec<_> = curr_key.generate_round_keys(&server_key).to_vec();
-        let mut state = State::from_u128_enc(0x3243f6a8_885a308d_313198a2_e0370734, &client_key);
+        // Initialize with test vectors
+        let cipher_key = Key::from_u128_enc(0x2b7e1516_28aed2a6a_bf71588_09cf4f3c, &client_key);
+        let round_keys: Vec<_> = cipher_key.generate_round_keys(&server_key).to_vec();
+        let mut plaintext_block = State::from_u128_enc(0x3243f6a8_885a308d_313198a2_e0370734, &client_key);
 
-        let ecb = ECB::new(&keys);
+        // Create ECB mode cipher
+        let ecb_cipher = ECB::new(&round_keys);
 
-        let start = Instant::now();
-        ecb.encrypt(&mut state, &server_key);
-        println!("ENCRYPT TIME TAKEN {:?}", start.elapsed());
+        // Encrypt the block
+        let start_time = Instant::now();
+        ecb_cipher.encrypt(&mut plaintext_block, &server_key);
+        println!("ENCRYPTION TIME: {:?}", start_time.elapsed());
 
+        // Verify encrypted result
         assert_eq!(
-            state.decrypt_to_u128(&client_key),
+            plaintext_block.decrypt_to_u128(&client_key),
             0x3925841d_02dc09fb_dc118597_196a0b32
         );
 
-        let start = Instant::now();
-        ecb.decrypt(&mut state, &server_key);
-        println!("DECRYPT TIME TAKEN {:?}", start.elapsed());
+        // Decrypt the block
+        let start_time = Instant::now();
+        ecb_cipher.decrypt(&mut plaintext_block, &server_key);
+        println!("DECRYPTION TIME: {:?}", start_time.elapsed());
 
+        // Verify decrypted result matches original plaintext
         assert_eq!(
-            state.decrypt_to_u128(&client_key),
+            plaintext_block.decrypt_to_u128(&client_key),
             0x3243f6a8_885a308d_313198a2_e0370734
         )
     }
 
+    /// Test that encrypting the same block twice produces the same result
     #[test]
-    fn test_ecb_twice() {
+    fn test_ecb_deterministic() {
         let (client_key, server_key) = gen_keys();
 
-        let curr_key = Key::from_u128_enc(0x2b7e1516_28aed2a6a_bf71588_09cf4f3c, &client_key);
-        let keys: Vec<_> = curr_key.generate_round_keys(&server_key).to_vec();
-        let mut state = State::from_u128_enc(0x3243f6a8_885a308d_313198a2_e0370734, &client_key);
-        let mut state_1 = state.clone();
+        // Initialize with test vectors
+        let cipher_key = Key::from_u128_enc(0x2b7e1516_28aed2a6a_bf71588_09cf4f3c, &client_key);
+        let round_keys: Vec<_> = cipher_key.generate_round_keys(&server_key).to_vec();
+        let mut block1 = State::from_u128_enc(0x3243f6a8_885a308d_313198a2_e0370734, &client_key);
+        let mut block2 = block1.clone();
 
-        let ecb = ECB::new(&keys);
+        // Create ECB mode cipher
+        let ecb_cipher = ECB::new(&round_keys);
 
+        // Encrypt both blocks
         with_server_key(|server_key| {
-            ecb.encrypt(&mut state, &server_key);
+            ecb_cipher.encrypt(&mut block1, &server_key);
         });
 
         with_server_key(|server_key| {
-            ecb.encrypt(&mut state_1, &server_key);
+            ecb_cipher.encrypt(&mut block2, &server_key);
         });
 
+        // Verify both produce the same ciphertext
         assert_eq!(
-            state.decrypt_to_u128(&client_key),
-            state_1.decrypt_to_u128(&client_key)
+            block1.decrypt_to_u128(&client_key),
+            block2.decrypt_to_u128(&client_key)
         )
     }
 }
